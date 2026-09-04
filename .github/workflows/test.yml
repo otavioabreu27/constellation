@@ -25,3 +25,5 @@ jobs:
         working-directory: examples/mist_dashboard
       - run: gleam check
         working-directory: examples/mist_stage_api
+      - run: gleam check
+        working-directory: examples/parallel_benchmark

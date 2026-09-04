@@ -162,3 +162,20 @@ mise x rebar@3.27.0 -- gleam run
 
 For a smaller integration without a frontend, see `examples/mist_stage_api`.
 It exposes only `/events/:value`, `/demand/:amount`, and `/consumed`.
+
+## Sequential vs parallel example
+
+`examples/parallel_benchmark` runs three increasingly large batteries of the
+same deterministic CPU-bound workload, sequentially and through multiple
+Constellation OTP consumers. It verifies the count and checksum before showing
+proportional duration bars and speedup for each battery:
+
+```sh
+cd examples/parallel_benchmark
+gleam run
+```
+
+Dispatch and mailbox delivery are included in the parallel measurement. Actor
+startup and shutdown are excluded. This demonstrates when independent CPU work
+can benefit from BEAM schedulers; it is not a substitute for the reproducible
+benchmark suite planned before a stable release.
