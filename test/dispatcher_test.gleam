@@ -1,0 +1,68 @@
+import stage/domains/dispatcher
+import stage/value_objects/subscription_id
+
+fn id(value: String) {
+  let assert Ok(value) = subscription_id.new(value)
+  value
+}
+
+fn demand_target(value: String, demand: Int, partition: Int) {
+  let target = dispatcher.target(id(value), partition)
+  let assert Ok(target) = dispatcher.with_demand(target, demand)
+  target
+}
+
+pub fn demand_dispatches_round_robin_test() {
+  let first = demand_target("a", 2, 0)
+  let second = demand_target("b", 2, 0)
+  let result =
+    dispatcher.dispatch(dispatcher.Demand, [first, second], [1, 2, 3, 4, 5])
+
+  assert result
+    == dispatcher.DispatchResult(
+      targets: [demand_target("a", 0, 0), demand_target("b", 0, 0)],
+      deliveries: [
+        dispatcher.Delivery(subscription_id: id("a"), events: [1, 3]),
+        dispatcher.Delivery(subscription_id: id("b"), events: [2, 4]),
+      ],
+      remaining: [5],
+    )
+}
+
+pub fn broadcast_requires_capacity_from_all_targets_test() {
+  let first = demand_target("a", 3, 0)
+  let second = demand_target("b", 1, 0)
+  let result =
+    dispatcher.dispatch(dispatcher.Broadcast, [first, second], [1, 2])
+
+  assert result
+    == dispatcher.DispatchResult(
+      targets: [demand_target("a", 2, 0), demand_target("b", 0, 0)],
+      deliveries: [
+        dispatcher.Delivery(subscription_id: id("a"), events: [1]),
+        dispatcher.Delivery(subscription_id: id("b"), events: [1]),
+      ],
+      remaining: [2],
+    )
+}
+
+pub fn partition_sends_events_to_matching_partition_test() {
+  let first = demand_target("a", 2, 0)
+  let second = demand_target("b", 2, 1)
+  let result =
+    dispatcher.dispatch(
+      dispatcher.Partition(fn(value) { value % 2 }),
+      [first, second],
+      [0, 1, 2, 3, 4],
+    )
+
+  assert result
+    == dispatcher.DispatchResult(
+      targets: [demand_target("a", 0, 0), demand_target("b", 0, 1)],
+      deliveries: [
+        dispatcher.Delivery(subscription_id: id("a"), events: [0, 2]),
+        dispatcher.Delivery(subscription_id: id("b"), events: [1, 3]),
+      ],
+      remaining: [4],
+    )
+}
