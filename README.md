@@ -5,7 +5,7 @@ A Gleam-native, demand-driven event pipeline for the BEAM, inspired by
 
 Constellation is an early response to
 [awesome-gleam issue #200](https://github.com/gleam-lang/awesome-gleam/issues/200),
-which calls for GenStage- and Flow-like data processing libraries in Gleam. It
+which calls for GenStage and Flow-like data processing libraries in Gleam. It
 currently implements the GenStage foundation; Flow-like stage composition and
 parallel processing remain future work.
 
@@ -21,6 +21,32 @@ pub fn main() -> Nil {
   let assert Ok(Nil) = constellation.stop(engine.data)
 }
 ```
+
+## Technical decisions
+
+- **Functional core, imperative shell:** protocol transitions are deterministic
+  and return effects. OTP modules own processes, mailboxes, monitoring, and
+  delivery.
+- **Protected invariants:** state and dispatch strategies are opaque. Commands
+  are the only way to change subscriptions, demand, ordering, and buffering.
+- **Open but safe dispatch:** demand, broadcast, and partition algorithms are
+  built in. Custom strategies select a target while the library retains demand
+  accounting and rejects unknown or full targets.
+- **Explicit backpressure:** events are delivered only against demand. Buffer
+  limits are checked after immediate dispatch, and an overflowing push is
+  rejected atomically.
+- **Explicit transport failures:** OTP calls return runtime, timeout, or
+  unavailable-process errors. A timed-out command may still complete, so a
+  retry must be safe to apply more than once.
+- **Lifecycle ownership:** participant processes are monitored, their
+  subscriptions are cancelled when they exit, and shutdown notifies active
+  subscriptions before stopping the Stage.
+- **Telemetry is not acknowledgement:** consumption reports are observability
+  signals only. Reporters execute inside the Stage process and must return
+  quickly.
+- **Pre-1.0 scope:** protocol acknowledgements, retry policies, supervision
+  contracts, multi-stage Flow-like composition, and advanced memory policies
+  are intentionally future work.
 
 ## Execution logs
 
@@ -85,13 +111,7 @@ cancels active subscriptions before the Stage actor exits. A timed-out command
 may still complete if it was already queued, so retry only operations that are
 safe for the application to apply more than once.
 
-## Extension and limits
-
-Dispatch is an opaque pure policy rather than a closed enum. Applications can
-use `demand_strategy`, `broadcast_strategy`, `partition_strategy`, or provide a
-new single-target selector with `dispatcher.custom_strategy` without modifying
-the library. The library still owns demand accounting and rejects unknown or
-full targets selected by custom code.
+## Configuration
 
 Producer-side buffering is unlimited by default. A capacity can be configured
 to reject pushes whose undelivered remainder would exceed the limit:
