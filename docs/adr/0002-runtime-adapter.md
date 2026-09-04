@@ -31,5 +31,9 @@ them to be tested without BEAM processes.
 - OTP integration tests focus only on actor transport and message delivery.
 - Runtime adapters have a small imperative surface where outbound actions are
   executed.
-- Process monitoring is intentionally deferred to M4. Until then, a subject
-  owner can terminate after registration without generating `ParticipantDown`.
+- The OTP adapter monitors each registered participant process once, regardless
+  of how many subscriptions it owns. A `DOWN` message is translated into the
+  pure runtime's `ParticipantDown` command.
+- Monitors are removed when explicit cancellation removes a participant's final
+  subscription. Participant failure therefore cannot leave active subscriptions
+  or stale monitor registrations behind.

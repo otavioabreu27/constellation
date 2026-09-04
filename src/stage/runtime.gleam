@@ -127,6 +127,15 @@ pub fn participant_down(
   )
 }
 
+/// Returns whether a participant still owns at least one subscription.
+pub fn has_participant(
+  runtime: Runtime(event, participant),
+  participant_id: ParticipantId,
+) -> Bool {
+  let Runtime(participants: participants, ..) = runtime
+  dict.has_key(participants, participant_id)
+}
+
 fn apply_subscribe(
   runtime: Runtime(event, participant),
   id: SubscriptionId,
