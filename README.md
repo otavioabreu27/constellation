@@ -171,5 +171,7 @@ gleam docs build
 gleam export hex-tarball
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for release notes and
-[MIGRATION.md](MIGRATION.md) for compatibility guidance.
+See the [changelog](https://github.com/otavioabreu27/constellation/blob/main/CHANGELOG.md)
+for release notes and the
+[migration guide](https://github.com/otavioabreu27/constellation/blob/main/MIGRATION.md)
+for compatibility guidance.
