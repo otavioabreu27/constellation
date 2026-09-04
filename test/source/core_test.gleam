@@ -31,6 +31,15 @@ pub fn duplicate_supply_offset_is_idempotent_test() {
   assert core.pending(unchanged) == 3
 }
 
+pub fn completed_grant_retry_is_idempotent_test() {
+  let #(state, _) = core.reconcile(core.new(), 2)
+  let assert Ok(#(state, _)) = core.supply(state, 1, 0, 2)
+  let assert Ok(#(state, result)) = core.supply(state, 1, 0, 2)
+
+  assert result == source.Duplicate
+  assert core.pending(state) == 0
+}
+
 pub fn supply_rejects_offset_gaps_and_overproduction_test() {
   let #(state, _) = core.reconcile(core.new(), 5)
 

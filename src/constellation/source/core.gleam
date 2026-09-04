@@ -15,7 +15,12 @@ type Status {
 
 @internal
 pub opaque type State {
-  State(status: Status, grants: List(Grant), next_id: Int)
+  State(
+    status: Status,
+    grants: List(Grant),
+    completed: List(#(Int, Int)),
+    next_id: Int,
+  )
 }
 
 @internal
@@ -27,7 +32,7 @@ pub type Action {
 
 @internal
 pub fn new() -> State {
-  State(status: Available, grants: [], next_id: 1)
+  State(status: Available, grants: [], completed: [], next_id: 1)
 }
 
 @internal
@@ -50,7 +55,11 @@ pub fn supply(
   event_count: Int,
 ) -> Result(#(State, SupplyResult), SupplyError) {
   case take_grant(state.grants, id, []) {
-    Error(_) -> Ok(#(state, source.StaleGrant))
+    Error(_) ->
+      case list.key_find(state.completed, id) {
+        Ok(_) -> Ok(#(state, source.Duplicate))
+        Error(_) -> Ok(#(state, source.StaleGrant))
+      }
     Ok(#(grant, rest)) -> supply_grant(state, grant, rest, offset, event_count)
   }
 }
@@ -150,8 +159,12 @@ fn accept_supply(
         True -> rest
         False -> insert_grant(rest, Grant(..grant, supplied: supplied))
       }
+      let completed = case supplied == grant.amount {
+        True -> remember_completed(state.completed, grant.id, grant.amount)
+        False -> state.completed
+      }
       Ok(#(
-        State(..state, grants: grants),
+        State(..state, grants: grants, completed: completed),
         source.Accepted(
           next_offset: supplied,
           remaining: grant.amount - supplied,
@@ -159,6 +172,15 @@ fn accept_supply(
       ))
     }
   }
+}
+
+fn remember_completed(
+  completed: List(#(Int, Int)),
+  id: Int,
+  amount: Int,
+) -> List(#(Int, Int)) {
+  [#(id, amount), ..completed]
+  |> list.take(64)
 }
 
 fn take_grant(
