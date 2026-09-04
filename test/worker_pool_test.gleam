@@ -128,6 +128,23 @@ pub fn failed_source_callback_stops_pool_instead_of_starving_test() {
   assert wait_until_unavailable(pool, 50) == worker_pool.PoolUnavailable
 }
 
+pub fn slow_source_callback_does_not_block_pool_test() {
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+    |> worker_pool.with_timeout(100)
+  let assert Ok(#(pool, _)) =
+    worker_pool.start_with_source(config, fn(_) { process.sleep(500) })
+
+  let assert Ok(worker_pool.Snapshot(workers: [_], ..)) =
+    worker_pool.snapshot(pool)
+  assert worker_pool.stop(pool) == Ok(Nil)
+}
+
 pub fn worker_renews_demand_only_after_handler_completion_test() {
   let events = process.new_subject()
   let config =

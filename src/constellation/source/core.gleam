@@ -215,7 +215,5 @@ fn insert_grant(grants: List(Grant), updated: Grant) -> List(Grant) {
 }
 
 fn revoke_actions(grants: List(Grant)) -> List(Action) {
-  list.map(grants, fn(grant) {
-    RevokeGrant(grant.id, grant.amount - grant.supplied)
-  })
+  list.map(grants, fn(grant) { RevokeGrant(grant.id, grant.amount) })
 }

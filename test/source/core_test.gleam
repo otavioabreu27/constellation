@@ -74,6 +74,14 @@ pub fn reduced_capacity_revokes_and_regrants_exact_amount_test() {
   assert core.pending(state) == 4
 }
 
+pub fn partial_grant_revocation_retains_original_identity_test() {
+  let #(state, _) = core.reconcile(core.new(), 5)
+  let assert Ok(#(state, _)) = core.supply(state, 1, 0, 2)
+  let #(_, actions) = core.unavailable(state)
+
+  assert actions == [core.RevokeGrant(1, 5)]
+}
+
 pub fn unavailable_source_revokes_and_available_source_regrants_test() {
   let #(state, _) = core.reconcile(core.new(), 5)
   let #(state, revoked) = core.unavailable(state)
