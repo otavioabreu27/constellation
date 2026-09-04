@@ -1,7 +1,8 @@
+import constellation/domains/dispatcher
+import constellation/value_objects/subscription_id
 import gleam/int
 import gleam/list
-import stage/domains/dispatcher
-import stage/value_objects/subscription_id
+import gleam/option.{Some}
 
 fn id(value: String) {
   let assert Ok(value) = subscription_id.new(value)
@@ -18,7 +19,13 @@ pub fn demand_dispatches_round_robin_test() {
   let first = demand_target("a", 2, 0)
   let second = demand_target("b", 2, 0)
   let result =
-    dispatcher.dispatch(dispatcher.Demand, [first, second], [1, 2, 3, 4, 5])
+    dispatcher.dispatch(dispatcher.demand_strategy(), [first, second], [
+      1,
+      2,
+      3,
+      4,
+      5,
+    ])
 
   assert result
     == dispatcher.DispatchResult(
@@ -35,7 +42,7 @@ pub fn broadcast_requires_capacity_from_all_targets_test() {
   let first = demand_target("a", 3, 0)
   let second = demand_target("b", 1, 0)
   let result =
-    dispatcher.dispatch(dispatcher.Broadcast, [first, second], [1, 2])
+    dispatcher.dispatch(dispatcher.broadcast_strategy(), [first, second], [1, 2])
 
   assert result
     == dispatcher.DispatchResult(
@@ -53,7 +60,7 @@ pub fn partition_sends_events_to_matching_partition_test() {
   let second = demand_target("b", 2, 1)
   let result =
     dispatcher.dispatch(
-      dispatcher.Partition(fn(value) { value % 2 }),
+      dispatcher.partition_strategy(fn(value) { value % 2 }),
       [first, second],
       [0, 1, 2, 3, 4],
     )
@@ -77,12 +84,16 @@ pub fn target_rejects_negative_demand_test() {
 
 pub fn demand_preserves_all_events_when_capacity_ends_test() {
   let result =
-    dispatcher.dispatch(dispatcher.Demand, [demand_target("a", 2, 0)], [
-      1,
-      2,
-      3,
-      4,
-    ])
+    dispatcher.dispatch(
+      dispatcher.demand_strategy(),
+      [demand_target("a", 2, 0)],
+      [
+        1,
+        2,
+        3,
+        4,
+      ],
+    )
 
   assert result.remaining == [3, 4]
   assert result.deliveries
@@ -99,7 +110,7 @@ pub fn demand_dispatches_large_batch_without_losing_events_test() {
     |> list.reverse
   let result =
     dispatcher.dispatch(
-      dispatcher.Demand,
+      dispatcher.demand_strategy(),
       [demand_target("a", 10_000, 0)],
       events,
     )
@@ -107,4 +118,30 @@ pub fn demand_dispatches_large_batch_without_losing_events_test() {
 
   assert delivered == events
   assert result.remaining == []
+}
+
+pub fn custom_strategy_can_extend_dispatch_without_library_changes_test() {
+  let target = demand_target("a", 2, 0)
+  let strategy = dispatcher.custom_strategy(fn(_, _) { Some(id("a")) })
+
+  assert dispatcher.has_capacity(strategy, [target]) == True
+  assert dispatcher.dispatch(strategy, [target], [1, 2])
+    == dispatcher.DispatchResult(
+      targets: [demand_target("a", 0, 0)],
+      deliveries: [
+        dispatcher.Delivery(subscription_id: id("a"), events: [1, 2]),
+      ],
+      remaining: [],
+    )
+}
+
+pub fn custom_strategy_cannot_deliver_to_unknown_target_test() {
+  let target = demand_target("a", 1, 0)
+  let strategy =
+    dispatcher.custom_strategy(fn(_, _) { Some(id("not-registered")) })
+
+  assert dispatcher.dispatch(strategy, [target], [1])
+    == dispatcher.DispatchResult(targets: [target], deliveries: [], remaining: [
+      1,
+    ])
 }

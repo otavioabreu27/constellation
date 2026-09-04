@@ -1,4 +1,4 @@
-import stage/domains/buffer
+import constellation/domains/buffer
 
 pub fn batches_are_buffered_in_fifo_order_test() {
   let value =

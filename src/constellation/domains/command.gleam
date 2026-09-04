@@ -1,5 +1,5 @@
-import stage/value_objects/participant_id.{type ParticipantId}
-import stage/value_objects/subscription_id.{type SubscriptionId}
+import constellation/value_objects/participant_id.{type ParticipantId}
+import constellation/value_objects/subscription_id.{type SubscriptionId}
 
 pub type Command(event) {
   Subscribe(id: SubscriptionId, participant_id: ParticipantId, partition: Int)
@@ -7,4 +7,5 @@ pub type Command(event) {
   Push(events: List(event))
   Cancel(subscription_id: SubscriptionId)
   ParticipantDown(participant_id: ParticipantId)
+  Shutdown
 }

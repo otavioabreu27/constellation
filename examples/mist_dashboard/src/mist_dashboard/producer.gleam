@@ -1,9 +1,8 @@
+import constellation/runtime/otp
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
 import gleam/otp/actor
-import stage/runtime
-import stage/runtime/otp
 
 const call_timeout = 5000
 
@@ -12,7 +11,7 @@ pub opaque type Producer {
 }
 
 type Message {
-  Generate(amount: Int, reply: Subject(Result(Nil, runtime.RuntimeError)))
+  Generate(amount: Int, reply: Subject(Result(Nil, otp.CallError)))
 }
 
 type State {
@@ -33,10 +32,7 @@ pub fn start(stage: otp.Stage(Int)) -> actor.StartResult(Producer) {
 }
 
 /// Generates a batch inside the producer process and pushes it to the stage.
-pub fn generate(
-  producer: Producer,
-  amount: Int,
-) -> Result(Nil, runtime.RuntimeError) {
+pub fn generate(producer: Producer, amount: Int) -> Result(Nil, otp.CallError) {
   let Producer(subject) = producer
   actor.call(subject, waiting: call_timeout, sending: fn(reply) {
     Generate(amount: amount, reply: reply)
@@ -55,7 +51,7 @@ fn handle_message(
 fn generate_batch(
   state: State,
   amount: Int,
-  reply: Subject(Result(Nil, runtime.RuntimeError)),
+  reply: Subject(Result(Nil, otp.CallError)),
 ) -> actor.Next(State, Message) {
   let events =
     int.range(

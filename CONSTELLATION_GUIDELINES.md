@@ -1,4 +1,4 @@
-# Gleam Stage — Project Guidelines
+# Constellation - Project Guidelines
 
 > A Gleam-native, typed implementation of demand-driven event processing inspired by Elixir's GenStage.
 
@@ -29,7 +29,7 @@ The project is split into two conceptual layers:
 
 ```text
 ┌─────────────────────────────────────┐
-│           gleam_stage_core          │
+│           constellation_core          │
 │                                     │
 │  Pure protocol and state machine    │
 │                                     │
@@ -45,7 +45,7 @@ The project is split into two conceptual layers:
                    │
                    ▼
 ┌─────────────────────────────────────┐
-│         gleam_stage_runtime         │
+│         constellation_runtime         │
 │                                     │
 │  Runtime adapter                    │
 │                                     │
@@ -422,9 +422,9 @@ Recommended initial structure:
 
 ```text
 src/
-├── gleam_stage.gleam
+├── constellation.gleam
 │
-├── gleam_stage/
+├── constellation/
 │   ├── core.gleam
 │   ├── command.gleam
 │   ├── effect.gleam
@@ -454,9 +454,9 @@ A valid first structure could simply be:
 
 ```text
 src/
-├── gleam_stage.gleam
-├── gleam_stage/core.gleam
-└── gleam_stage/runtime/otp.gleam
+├── constellation.gleam
+├── constellation/core.gleam
+└── constellation/runtime/otp.gleam
 ```
 
 Refactor only when concepts become stable.
@@ -693,9 +693,9 @@ cancel
 Potential direction:
 
 ```gleam
-stage.producer(...)
-stage.consumer(...)
-stage.subscribe(...)
+constellation.producer(...)
+constellation.consumer(...)
+constellation.subscribe(...)
 ```
 
 But API naming is not part of the early milestones.
@@ -712,7 +712,7 @@ Possible future package:
 gleam_flow
     │
     ▼
-gleam_stage
+constellation
 ```
 
 Possible operations:
@@ -1094,15 +1094,14 @@ Reach `1.0.0` only when:
 
 Do not over-optimize naming on day one.
 
-Working package names:
+The selected package name is:
 
 ```text
-gleam_stage
-stage
-stages
+constellation
 ```
 
-Before publishing, verify naming availability and community expectations.
+The name was available on Hex when selected. Verify availability again before
+the first release.
 
 The architecture matters more than the package name in the first milestone.
 
@@ -1117,8 +1116,8 @@ The first coding session should only attempt this:
 Create project.
 
 ```bash
-gleam new gleam_stage
-cd gleam_stage
+gleam new constellation
+cd constellation
 ```
 
 ### Step 2

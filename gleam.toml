@@ -1,5 +1,7 @@
-name = "stage"
-version = "1.0.0"
+name = "constellation"
+version = "0.1.0"
+
+description = "Demand-driven event pipelines and backpressure for Gleam and OTP"
 
 # Fill out these fields if you intend to generate HTML documentation or publish
 # your project to the Hex package manager.

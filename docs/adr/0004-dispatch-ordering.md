@@ -12,22 +12,25 @@ may be sent to independent runtime processes.
 
 ## Decision
 
-`Demand` assigns each event to one active subscription using round-robin. The
-rotation is persisted in stage state, so fairness applies across commands and
-not only within one event batch. Subscriptions without demand are skipped.
+`demand_strategy` assigns each event to one active subscription using
+round-robin. The rotation is persisted in stage state, so fairness applies
+across commands and not only within one event batch. Subscriptions without
+demand are skipped.
 
-`Broadcast` uses a strict barrier. It emits an event only when every active
+`broadcast_strategy` uses a strict barrier. It emits an event only when every active
 subscription has demand, and each emitted event consumes one demand unit from
 each subscription. Cancelled subscriptions are not part of the barrier.
 
-`Partition` routes an event using its partition key. Multiple subscriptions may
+`partition_strategy` routes an event using its partition key. Multiple subscriptions may
 own the same partition and are selected round-robin. An event without an owner
 that has demand remains buffered, while events from other partitions may
 continue. This avoids head-of-line blocking between partitions.
 
-All strategies preserve FIFO order for each subscription. No global processing
-order is promised across different subscriptions because runtime consumers may
-execute concurrently. Buffered events retain their relative order.
+All built-in strategies preserve FIFO order for each subscription. No global
+processing order is promised across different subscriptions because runtime
+consumers may execute concurrently. Buffered events retain their relative
+order. Custom selectors may intentionally skip an earlier event, so they own
+the ordering policy while the library still enforces target and demand safety.
 
 Cancelled subscriptions are removed from the active dispatch set. Their IDs
 are retained separately so cancellation remains idempotent and later commands

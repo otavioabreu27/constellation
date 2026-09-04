@@ -1,7 +1,7 @@
-import stage/domains/stage_error
-import stage/runtime
-import stage/value_objects/participant_id
-import stage/value_objects/subscription_id
+import constellation/domains/stage_error
+import constellation/runtime
+import constellation/value_objects/participant_id
+import constellation/value_objects/subscription_id
 
 fn id(value: String) {
   let assert Ok(id) = subscription_id.new(value)

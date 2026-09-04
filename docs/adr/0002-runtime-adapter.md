@@ -14,10 +14,10 @@ an actor would require each future runtime adapter to implement them again.
 
 The runtime is split into two layers:
 
-- `stage/runtime` is a pure coordinator parameterized by the participant handle
+- `constellation/runtime` is a pure coordinator parameterized by the participant handle
   type. It owns participant and subscription registries, applies core commands,
   and resolves core effects into validated `Outbound` values.
-- `stage/runtime/otp` owns the actor, typed subjects, synchronous calls, and the
+- `constellation/runtime/otp` owns the actor, typed subjects, synchronous calls, and the
   execution of `Outbound` values using `process.send`.
 
 The generic runtime returns outbound actions as data instead of accepting

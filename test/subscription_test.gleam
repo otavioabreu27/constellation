@@ -1,6 +1,6 @@
-import stage/domains/subscription
-import stage/value_objects/participant_id
-import stage/value_objects/subscription_id
+import constellation/domains/subscription
+import constellation/value_objects/participant_id
+import constellation/value_objects/subscription_id
 
 pub fn new_preserves_subscription_id_test() {
   let assert Ok(id) = subscription_id.new("subscription-uuid")

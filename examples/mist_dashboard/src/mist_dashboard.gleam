@@ -1,3 +1,6 @@
+import constellation/runtime/otp
+import constellation/value_objects/participant_id
+import constellation/value_objects/subscription_id
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http/request.{type Request}
@@ -11,14 +14,15 @@ import mist.{type Connection, type ResponseData}
 import mist_dashboard/dashboard
 import mist_dashboard/page
 import mist_dashboard/producer
-import stage/runtime/otp
-import stage/value_objects/participant_id
-import stage/value_objects/subscription_id
 
 pub fn main() -> Nil {
   logging.configure()
   let assert Ok(id) = subscription_id.new("dashboard-consumer")
-  let assert Ok(stage) = otp.start_with_config(otp.config() |> otp.with_logging)
+  let assert Ok(config) =
+    otp.config()
+    |> otp.with_logging
+    |> otp.with_buffer_capacity(dashboard.buffer_capacity)
+  let assert Ok(stage) = otp.start_with_config(config)
   let assert Ok(producer) = producer.start(stage.data)
   let assert Ok(control) =
     dashboard.start(
@@ -51,6 +55,10 @@ fn handle_request(
       json_response(snapshot_json(dashboard.snapshot(control)))
     ["api", "ask", amount] -> action_response(amount, dashboard.ask, control)
     ["api", "push", amount] -> action_response(amount, dashboard.push, control)
+    ["api", "run", "stop"] ->
+      json_response(snapshot_json(dashboard.stop_run(control)))
+    ["api", "run", total] ->
+      action_response(total, dashboard.start_run, control)
     _ -> text_response(404, "not found")
   }
 }
@@ -97,6 +105,20 @@ fn snapshot_json(snapshot: dashboard.Snapshot) -> String {
   <> snapshot.consumer_pid
   <> "\",\"active\":"
   <> bool_json(snapshot.active)
+  <> ",\"running\":"
+  <> bool_json(snapshot.running)
+  <> ",\"run_total\":"
+  <> int.to_string(snapshot.run_total)
+  <> ",\"run_pushed\":"
+  <> int.to_string(snapshot.run_pushed)
+  <> ",\"run_received\":"
+  <> int.to_string(snapshot.run_received)
+  <> ",\"rejected_pushes\":"
+  <> int.to_string(snapshot.rejected_pushes)
+  <> ",\"backpressured\":"
+  <> bool_json(snapshot.backpressured)
+  <> ",\"buffer_capacity\":"
+  <> int.to_string(dashboard.buffer_capacity)
   <> "}"
 }
 

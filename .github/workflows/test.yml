@@ -21,3 +21,7 @@ jobs:
       - run: gleam deps download
       - run: gleam test
       - run: gleam format --check src test
+      - run: gleam check
+        working-directory: examples/mist_dashboard
+      - run: gleam check
+        working-directory: examples/mist_stage_api
