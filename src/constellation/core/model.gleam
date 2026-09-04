@@ -106,6 +106,13 @@ pub fn buffer_size(state: State(event)) -> Int {
 }
 
 @internal
+pub fn available_demand(state: State(event)) -> Int {
+  state.subscriptions
+  |> dict.values
+  |> list.fold(0, fn(total, value) { total + subscription.demand(value) })
+}
+
+@internal
 pub fn buffer_capacity(state: State(event)) -> Option(Int) {
   state.buffer_capacity
 }

@@ -46,6 +46,18 @@ pub fn buffered_events(state: StageState(event)) -> List(event) {
   model.buffered_events(state)
 }
 
+@internal
+pub fn available_demand(state: StageState(event)) -> Int {
+  let StageState(state) = state
+  model.available_demand(state)
+}
+
+@internal
+pub fn buffer_size(state: StageState(event)) -> Int {
+  let StageState(state) = state
+  model.buffer_size(state)
+}
+
 /// Looks up an active subscription and distinguishes cancelled IDs from unknown IDs.
 pub fn subscription(
   state: StageState(event),
