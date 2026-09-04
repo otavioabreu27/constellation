@@ -1,3 +1,5 @@
+//// High-level configuration and lifecycle API for Constellation OTP stages.
+
 import constellation/domains/dispatcher
 import constellation/runtime/otp
 import constellation/runtime/otp/telemetry

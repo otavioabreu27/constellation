@@ -1,3 +1,5 @@
+//// Typed OTP process adapter for Constellation stages.
+
 import constellation/domains/dispatcher
 import constellation/runtime
 import constellation/runtime/otp/client
@@ -31,6 +33,7 @@ pub type CallError {
   StageUnavailable(ExitReason)
 }
 
+/// Invalid OTP Stage configuration values.
 pub type ConfigError {
   InvalidCallTimeout(Int)
   InvalidBufferCapacity(Int)

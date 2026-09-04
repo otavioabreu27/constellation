@@ -1,3 +1,5 @@
+//// Stateful OTP consumers with automatic subscription lifecycle handling.
+
 import constellation/runtime
 import constellation/runtime/otp
 import constellation/runtime/otp/client

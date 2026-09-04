@@ -1,3 +1,5 @@
+//// Pure, demand-aware event dispatch strategies.
+
 import constellation/domains/dispatcher/broadcast
 import constellation/domains/dispatcher/common
 import constellation/domains/dispatcher/custom
@@ -12,6 +14,7 @@ pub opaque type Target {
   Target(inner: common.Target)
 }
 
+/// Errors returned while constructing dispatch targets.
 pub type TargetError {
   InvalidDemand(Int)
 }

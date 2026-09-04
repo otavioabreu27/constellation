@@ -1,3 +1,5 @@
+//// Structured lifecycle telemetry for OTP stages.
+
 import gleam/int
 import logging
 

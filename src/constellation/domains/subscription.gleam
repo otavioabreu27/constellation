@@ -1,6 +1,9 @@
+//// Subscription identity, partition, and demand values.
+
 import constellation/value_objects/participant_id.{type ParticipantId}
 import constellation/value_objects/subscription_id.{type SubscriptionId}
 
+/// An active downstream subscription and its remaining demand.
 pub opaque type Subscription {
   Subscription(
     id: SubscriptionId,
@@ -10,6 +13,7 @@ pub opaque type Subscription {
   )
 }
 
+/// Creates an active subscription with zero demand in the default partition.
 pub fn new(id: SubscriptionId, participant: ParticipantId) -> Subscription {
   new_with_partition(id, participant, 0)
 }
@@ -28,26 +32,31 @@ pub fn new_with_partition(
   )
 }
 
+/// Returns this subscription's stable identity.
 pub fn id(subscription: Subscription) -> SubscriptionId {
   let Subscription(id: value, ..) = subscription
   value
 }
 
+/// Returns the participant that owns this subscription.
 pub fn participant_id(subscription: Subscription) -> ParticipantId {
   let Subscription(participant_id: value, ..) = subscription
   value
 }
 
+/// Returns the subscription's remaining event capacity.
 pub fn demand(subscription: Subscription) -> Int {
   let Subscription(demand: value, ..) = subscription
   value
 }
 
+/// Returns the dispatcher partition assigned to this subscription.
 pub fn partition(subscription: Subscription) -> Int {
   let Subscription(partition: value, ..) = subscription
   value
 }
 
+/// Errors returned while changing subscription demand.
 pub type SubscriptionError {
   InvalidDemand(Int)
   InsufficientDemand

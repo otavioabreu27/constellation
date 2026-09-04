@@ -1,120 +1,133 @@
 # constellation
 
-A Gleam-native, demand-driven event pipeline for the BEAM, inspired by
-[Elixir GenStage](https://github.com/elixir-lang/gen_stage).
+A Gleam-native, demand-driven event pipeline and resilient worker pool for the
+BEAM, inspired by [Elixir GenStage](https://github.com/elixir-lang/gen_stage).
 
-Constellation is an early response to
-[awesome-gleam issue #200](https://github.com/gleam-lang/awesome-gleam/issues/200),
-which calls for GenStage and Flow-like data processing libraries in Gleam. It
-currently implements the GenStage foundation; Flow-like stage composition and
-parallel processing remain future work.
+Constellation owns in-memory flow control: demand, dispatch, buffering, worker
+capacity, and process replacement. Applications continue to own durable jobs,
+leases, acknowledgements, retries, backoff, and dead-letter queues.
 
-The package is not published on Hex yet. The `constellation` name was available
-when selected, but availability must be checked again before release.
+## Install
+
+Constellation requires Gleam 1.18 or later and the Erlang target.
+
+```sh
+gleam add constellation
+```
+
+## Worker pool
+
+The high-level pool starts and owns its Stage and workers. Each worker asks for
+`prefetch` events, processes them in its own OTP process, and renews only the
+capacity it has completed.
 
 ```gleam
-import constellation
+import constellation/worker_pool
 
-pub fn main() -> Nil {
-  let assert Ok(engine) = constellation.start()
-  let assert Ok(Nil) = constellation.push(engine.data, [1, 2, 3])
-  let assert Ok(Nil) = constellation.stop(engine.data)
+pub fn main() {
+  let config = worker_pool.each(
+    size: 4,
+    prefetch: 8,
+    initial_state: fn(_) { 0 },
+    handle_event: fn(processed, _event) { processed + 1 },
+  )
+  let assert Ok(pool) = worker_pool.start(config)
+
+  let assert Ok(Nil) = worker_pool.push(pool, [1, 2, 3, 4])
+  let assert Ok(Nil) = worker_pool.stop(pool)
 }
 ```
 
-## Technical decisions
+The maximum outstanding capacity is `workers * prefetch`. A worker that exits
+is replaced in the same slot with a fresh monotonic `WorkerId`. A batch whose
+handler crashes is not retried, so worker processing is at-most-once. Persist
+and retry work before pushing it when stronger delivery semantics are required.
 
-- **Functional core, imperative shell:** protocol transitions are deterministic
-  and return effects. OTP modules own processes, mailboxes, monitoring, and
-  delivery.
-- **Protected invariants:** state and dispatch strategies are opaque. Commands
-  are the only way to change subscriptions, demand, ordering, and buffering.
-- **Open but safe dispatch:** demand, broadcast, and partition algorithms are
-  built in. Custom strategies select a target while the library retains demand
-  accounting and rejects unknown or full targets.
-- **Explicit backpressure:** events are delivered only against demand. Buffer
-  limits are checked after immediate dispatch, and an overflowing push is
-  rejected atomically.
-- **Explicit transport failures:** OTP calls return runtime, timeout, or
-  unavailable-process errors. A timed-out command may still complete, so a
-  retry must be safe to apply more than once.
-- **Lifecycle ownership:** participant processes are monitored, their
-  subscriptions are cancelled when they exit, and shutdown notifies active
-  subscriptions before stopping the Stage.
-- **Telemetry is not acknowledgement:** consumption reports are observability
-  signals only. Reporters execute inside the Stage process and must return
-  quickly.
-- **Pre-1.0 scope:** protocol acknowledgements, retry policies, supervision
-  contracts, multi-stage Flow-like composition, and advanced memory policies
-  are intentionally future work.
+## Asynchronous source
 
-## Execution logs
-
-OTP runtime logging is opt-in:
+A source receives callbacks only when downstream capacity is unreserved. It can
+retain a grant while empty and supply it later without polling.
 
 ```gleam
-import logging
+import constellation/source
+import constellation/worker_pool
+import gleam/erlang/process
+
+pub fn main() {
+  let grants = process.new_subject()
+  let config = worker_pool.each(
+    size: 2,
+    prefetch: 4,
+    initial_state: fn(_) { 0 },
+    handle_event: fn(total, event) { total + event },
+  )
+  let assert Ok(#(pool, attached_source)) =
+    worker_pool.start_with_source(config, fn(event) {
+      process.send(grants, event)
+    })
+  let assert Ok(source.DemandGranted(grant)) =
+    process.receive(grants, within: 1000)
+
+  let assert Ok(source.Accepted(..)) =
+    source.supply(attached_source, grant, 0, [1, 2])
+  let assert Ok(Nil) = worker_pool.stop(pool)
+}
+```
+
+Supply is partial and offset-based. Exact retries return `Duplicate`, stale or
+foreign grants are rejected, and shutdown revokes pending grants. Source and
+reporter callbacks run outside the Stage process.
+
+## Low-level Stage
+
+Applications that need explicit subscriptions can use the OTP consumer:
+
+```gleam
 import constellation
-import constellation/runtime/otp
-
-logging.configure()
-let assert Ok(started) =
-  constellation.config()
-  |> constellation.with_logging
-  |> constellation.start_with_config
-```
-
-Logs identify the stage, caller and consumer PIDs and distinguish receiving a
-command, dispatching a batch, enqueueing it in the consumer mailbox, and the
-consumer reporting that processing finished. A consumer reports processing
-after handling an `Events` message:
-
-```gleam
-otp.report_consumed(started.data, subscription_id, list.length(events))
-```
-
-`mailbox_enqueued` does not mean consumed. A `reported` record is an explicit
-observability statement from the consumer, not a protocol-level guarantee.
-
-The OTP adapter also monitors the process that owns each participant subject.
-If that process exits, all of its subscriptions are cancelled automatically and
-logging records a `participant_down` operation with the PID and exit reason.
-
-## High-level OTP consumer
-
-`constellation/runtime/otp/consumer` owns the actor, subject, selector, subscription,
-consumption reporting, and cancellation lifecycle:
-
-```gleam
-import gleam/list
 import constellation/runtime/otp/consumer
+import constellation/value_objects/participant_id
+import constellation/value_objects/subscription_id
+import gleam/list
 
-let assert Ok(started_consumer) =
-  consumer.start(
-    stage,
-    subscription_id,
-    participant_id,
+pub fn main() {
+  let assert Ok(engine) = constellation.start()
+  let assert Ok(id) = subscription_id.new("example-consumer")
+  let assert Ok(started) = consumer.start(
+    engine.data,
+    id,
+    participant_id.new("example"),
     [],
     list.append,
   )
 
-consumer.ask(started_consumer.data, 5)
-let assert Ok(processed) = consumer.state(started_consumer.data)
+  let assert Ok(Nil) = consumer.ask(started.data, 3)
+  let assert Ok(Nil) = constellation.push(engine.data, [1, 2, 3])
+  let assert Ok([1, 2, 3]) = consumer.state(started.data)
+  let assert Ok(Nil) = consumer.stop(started.data)
+  let assert Ok(Nil) = constellation.stop(engine.data)
+}
 ```
 
-The `on_events` function updates application state. Once it returns, the
-consumer automatically reports the processed batch with `otp.report_consumed`.
+## Guarantees and scope
 
-OTP operations return `otp.CallError`, which distinguishes runtime validation,
-timeouts, and an unavailable Stage process. Stopping an engine gracefully
-cancels active subscriptions before the Stage actor exits. A timed-out command
-may still complete if it was already queued, so retry only operations that are
-safe for the application to apply more than once.
+- Protocol transitions are deterministic and return effects; OTP modules own
+  processes, mailboxes, monitoring, callbacks, and delivery.
+- Events are delivered only against demand. Buffer overflow is rejected
+  atomically after immediate dispatch.
+- Demand, broadcast, partition, and safe custom dispatch strategies are built
+  in. Source-backed pools use demand dispatch because other strategies cannot
+  safely expose one scalar upstream capacity.
+- OTP failures are typed. A timed-out command may still complete if it was
+  already queued, so callers must only retry idempotent application operations.
+- Worker-pool callbacks are isolated from the Stage. Low-level Stage telemetry
+  reporters execute in the Stage process and must return quickly.
+- State is ephemeral. Persistence, leases, durable ACKs, retries, backoff,
+  dead-letter queues, and distributed coordination are application concerns.
 
 ## Configuration
 
-Producer-side buffering is unlimited by default. A capacity can be configured
-to reject pushes whose undelivered remainder would exceed the limit:
+The low-level Stage buffer is unlimited by default. A capacity can reject pushes
+whose undelivered remainder would exceed the limit:
 
 ```gleam
 let assert Ok(config) =
@@ -124,58 +137,39 @@ let assert Ok(config) =
 let assert Ok(engine) = constellation.start_with_config(config)
 ```
 
-Call timeouts are also explicit through `constellation.with_call_timeout`.
+Call timeouts are explicit through `constellation.with_call_timeout` and
+`worker_pool.with_timeout`.
 
-## Development
+## Examples
 
-```sh
-gleam run   # Run the project
-gleam test  # Run the tests
-```
+- [`examples/worker_pool`](https://github.com/otavioabreu27/constellation/tree/main/examples/worker_pool)
+  is the smallest push-driven pool example.
+- [`examples/async_source`](https://github.com/otavioabreu27/constellation/tree/main/examples/async_source)
+  supplies one demand grant in two parts.
+- [`examples/mist_dashboard`](https://github.com/otavioabreu27/constellation/tree/main/examples/mist_dashboard)
+  visualizes a 500,000-event run, demand, buffer pressure, and throughput.
+- [`examples/mist_stage_api`](https://github.com/otavioabreu27/constellation/tree/main/examples/mist_stage_api)
+  exposes a smaller HTTP integration.
+- [`examples/parallel_benchmark`](https://github.com/otavioabreu27/constellation/tree/main/examples/parallel_benchmark)
+  compares deterministic sequential and OTP workloads at 25K, 100K, and 250K.
 
-## Visual demand demo
-
-The Mist dashboard runs as a separate example so HTTP concerns do not become
-dependencies of the Constellation library.
+Run the dashboard with:
 
 ```sh
 cd examples/mist_dashboard
 gleam deps download
-gleam run
-```
-
-Open <http://localhost:4000> and start the 500,000-event run. The dashboard
-shows live ingress and consumer throughput, the three OTP processes, FIFO
-buffer pressure, rejected push retries, and completion progress. A preset run
-fills the bounded buffer, activates real Stage backpressure, and drains it in
-about ten seconds, making it suitable for a short screen recording.
-
-The workload represents synthetic requests as Stage events. It runs inside OTP
-actors after one HTTP command; it does not create 500,000 HTTP connections.
-
-The example requires `rebar3` for Mist's Erlang dependencies. With `mise`, it
-can be run without changing the global tool configuration:
-
-```sh
 mise x rebar@3.27.0 -- gleam run
 ```
 
-For a smaller integration without a frontend, see `examples/mist_stage_api`.
-It exposes only `/events/:value`, `/demand/:amount`, and `/consumed`.
-
-## Sequential vs parallel example
-
-`examples/parallel_benchmark` runs three increasingly large batteries of the
-same deterministic CPU-bound workload, sequentially and through multiple
-Constellation OTP consumers. It verifies the count and checksum before showing
-proportional duration bars and speedup for each battery:
+## Development
 
 ```sh
-cd examples/parallel_benchmark
-gleam run
+gleam deps download
+gleam format --check src test examples
+gleam test
+gleam docs build
+gleam export hex-tarball
 ```
 
-Dispatch and mailbox delivery are included in the parallel measurement. Actor
-startup and shutdown are excluded. This demonstrates when independent CPU work
-can benefit from BEAM schedulers; it is not a substitute for the reproducible
-benchmark suite planned before a stable release.
+See [CHANGELOG.md](CHANGELOG.md) for release notes and
+[MIGRATION.md](MIGRATION.md) for compatibility guidance.

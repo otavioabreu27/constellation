@@ -1,3 +1,5 @@
+//// Runtime-independent routing between the functional core and participants.
+
 import constellation/core
 import constellation/domains/command
 import constellation/domains/dispatcher

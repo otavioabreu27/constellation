@@ -64,7 +64,8 @@ pub fn grant_amount(grant: DemandGrant) -> Int {
 
 /// Supplies the next contiguous portion of a demand grant.
 ///
-/// Retrying an already accepted offset is safe and returns `Duplicate`.
+/// Retrying an already accepted range is safe and returns `Duplicate` while
+/// its grant remains in the source's bounded recent-completion window.
 pub fn supply(
   source: Source(event),
   grant: DemandGrant,

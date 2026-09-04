@@ -2,6 +2,8 @@
 ////
 //// The pool owns the Stage protocol and worker lifecycle. Workers request a
 //// bounded prefetch window and renew demand only after their handler returns.
+//// If a worker fails after receiving a batch, that batch is not retried;
+//// processing is at-most-once and recovery policy remains application-owned.
 
 import constellation/core
 import constellation/domains/command

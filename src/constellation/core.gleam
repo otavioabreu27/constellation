@@ -1,3 +1,5 @@
+//// Deterministic protocol transitions for demand-driven stages.
+
 import constellation/core/dispatch
 import constellation/core/lifecycle
 import constellation/core/model
