@@ -135,7 +135,12 @@ fn supply_grant(
   event_count: Int,
 ) -> Result(#(State, SupplyResult), SupplyError) {
   case offset < grant.supplied {
-    True -> Ok(#(state, source.Duplicate))
+    True ->
+      case offset + event_count <= grant.supplied {
+        True -> Ok(#(state, source.Duplicate))
+        False ->
+          Error(source.OffsetOverlap(grant.supplied, offset + event_count))
+      }
     False ->
       case offset > grant.supplied {
         True -> Error(source.OffsetGap(grant.supplied, offset))

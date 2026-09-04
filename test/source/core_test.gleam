@@ -31,6 +31,14 @@ pub fn duplicate_supply_offset_is_idempotent_test() {
   assert core.pending(unchanged) == 3
 }
 
+pub fn partially_overlapping_retry_is_rejected_test() {
+  let #(state, _) = core.reconcile(core.new(), 5)
+  let assert Ok(#(state, _)) = core.supply(state, 1, 0, 2)
+
+  assert core.supply(state, 1, 1, 2) == Error(source.OffsetOverlap(2, 3))
+  assert core.pending(state) == 3
+}
+
 pub fn completed_grant_retry_is_idempotent_test() {
   let #(state, _) = core.reconcile(core.new(), 2)
   let assert Ok(#(state, _)) = core.supply(state, 1, 0, 2)

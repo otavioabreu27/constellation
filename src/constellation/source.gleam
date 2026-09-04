@@ -5,10 +5,11 @@
 
 import constellation/runtime/otp/client
 import gleam/erlang/process.{type Subject}
+import gleam/erlang/reference.{type Reference}
 
 /// Capacity reserved for one asynchronous source request.
 pub opaque type DemandGrant {
-  DemandGrant(id: Int, amount: Int)
+  DemandGrant(source_id: Reference, id: Int, amount: Int)
 }
 
 /// Notifications emitted to an attached asynchronous source.
@@ -28,19 +29,21 @@ pub type SupplyResult {
 /// Protocol errors returned while supplying a demand grant.
 pub type SupplyError {
   OffsetGap(expected: Int, provided: Int)
+  OffsetOverlap(accepted_until: Int, provided_until: Int)
   GrantExceeded(remaining: Int, provided: Int)
 }
 
 /// Errors returned by a source attached to an OTP worker pool.
 pub type SourceError {
   SupplyProtocol(SupplyError)
+  SourceMismatch
   SourceTimeout
   SourceUnavailable
 }
 
 /// A typed capability used to supply events for demand grants.
 pub opaque type Source(event) {
-  Source(subject: Subject(Request(event)), timeout: Int)
+  Source(source_id: Reference, subject: Subject(Request(event)), timeout: Int)
 }
 
 @internal
@@ -68,12 +71,21 @@ pub fn supply(
   offset: Int,
   events: List(event),
 ) -> Result(SupplyResult, SourceError) {
-  case
-    client.call(source.subject, source.timeout, Supply(grant, offset, events, _))
-  {
-    Ok(result) -> result
-    Error(client.Timeout) -> Error(SourceTimeout)
-    Error(client.StageUnavailable(_)) -> Error(SourceUnavailable)
+  case grant.source_id == source.source_id {
+    False -> Error(SourceMismatch)
+    True ->
+      case
+        client.call(source.subject, source.timeout, Supply(
+          grant,
+          offset,
+          events,
+          _,
+        ))
+      {
+        Ok(result) -> result
+        Error(client.Timeout) -> Error(SourceTimeout)
+        Error(client.StageUnavailable(_)) -> Error(SourceUnavailable)
+      }
   }
 }
 
@@ -88,8 +100,8 @@ pub fn available(source: Source(event)) -> Nil {
 }
 
 @internal
-pub fn new_grant(id: Int, amount: Int) -> DemandGrant {
-  DemandGrant(id, amount)
+pub fn new_grant(source_id: Reference, id: Int, amount: Int) -> DemandGrant {
+  DemandGrant(source_id, id, amount)
 }
 
 @internal
@@ -99,10 +111,11 @@ pub fn grant_id(grant: DemandGrant) -> Int {
 
 @internal
 pub fn new_source(
+  source_id: Reference,
   subject: Subject(Request(event)),
   timeout: Int,
 ) -> Source(event) {
-  Source(subject, timeout)
+  Source(source_id, subject, timeout)
 }
 
 @internal

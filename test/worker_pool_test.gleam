@@ -83,6 +83,51 @@ pub fn source_accepts_partial_and_idempotent_supply_test() {
   assert worker_pool.stop(pool) == Ok(Nil)
 }
 
+pub fn grant_cannot_be_supplied_to_another_source_test() {
+  let first_notifications = process.new_subject()
+  let second_notifications = process.new_subject()
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+  let assert Ok(#(first_pool, _)) =
+    worker_pool.start_with_source(config, fn(event) {
+      process.send(first_notifications, event)
+    })
+  let assert Ok(#(second_pool, second_source)) =
+    worker_pool.start_with_source(config, fn(event) {
+      process.send(second_notifications, event)
+    })
+  let assert Ok(source.DemandGranted(first_grant)) =
+    process.receive(first_notifications, within: 1000)
+  let assert Ok(source.DemandGranted(_)) =
+    process.receive(second_notifications, within: 1000)
+
+  assert source.supply(second_source, first_grant, 0, [1])
+    == Error(source.SourceMismatch)
+  assert worker_pool.stop(first_pool) == Ok(Nil)
+  assert worker_pool.stop(second_pool) == Ok(Nil)
+}
+
+pub fn failed_source_callback_stops_pool_instead_of_starving_test() {
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+  let assert Ok(#(pool, _)) =
+    worker_pool.start_with_source(config, fn(_) {
+      panic as "expected source callback failure"
+    })
+
+  assert wait_until_unavailable(pool, 50) == worker_pool.PoolUnavailable
+}
+
 pub fn worker_renews_demand_only_after_handler_completion_test() {
   let events = process.new_subject()
   let config =
@@ -197,6 +242,17 @@ fn wait_for_replacement(pool, previous, attempts: Int) {
       assert attempts > 0
       process.sleep(10)
       wait_for_replacement(pool, previous, attempts - 1)
+    }
+  }
+}
+
+fn wait_until_unavailable(pool, attempts: Int) {
+  case worker_pool.snapshot(pool) {
+    Error(error) -> error
+    Ok(_) -> {
+      assert attempts > 0
+      process.sleep(10)
+      wait_until_unavailable(pool, attempts - 1)
     }
   }
 }

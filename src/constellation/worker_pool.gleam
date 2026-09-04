@@ -13,6 +13,7 @@ import constellation/source/core as source_core
 import constellation/value_objects/participant_id
 import constellation/value_objects/subscription_id.{type SubscriptionId}
 import gleam/erlang/process.{type Monitor, type Pid, type Subject}
+import gleam/erlang/reference.{type Reference}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -83,11 +84,17 @@ pub opaque type Pool(event, worker_state) {
 type WorkerMessage(event) {
   Work(List(event))
   StopWorker
+  PoolDown(process.Down)
 }
 
 type NotifierMessage(message) {
   Notify(message)
   StopNotifier
+  NotifierPoolDown(process.Down)
+}
+
+type Notifier(message) {
+  Notifier(subject: Subject(NotifierMessage(message)), pid: Pid)
 }
 
 type Worker(event) {
@@ -105,13 +112,14 @@ type Worker(event) {
 type State(event, worker_state) {
   State(
     pool_subject: Subject(Message(event, worker_state)),
+    source_id: Reference,
     stage: core.StageState(event),
     workers: List(Worker(event)),
     next_worker_id: Int,
     config: Config(event, worker_state),
-    reporter: Subject(NotifierMessage(Event)),
+    reporter: Notifier(Event),
     source_state: Option(source_core.State),
-    source_notifier: Option(Subject(NotifierMessage(source.Event))),
+    source_notifier: Option(Notifier(source.Event)),
     stopping: Bool,
     shutdown_started: Bool,
     stop_waiters: List(Subject(Result(Nil, PoolError))),
@@ -240,9 +248,10 @@ fn start_mode(
   notify_source: Option(fn(source.Event) -> Nil),
 ) -> Result(#(Pool(event, worker_state), Option(Source(event))), StartError) {
   use _ <- result.try(validate(config))
+  let source_id = reference.new()
   let builder =
     actor.new_with_initialiser(config.timeout, fn(pool_subject) {
-      initialise(pool_subject, notify_source, config)
+      initialise(pool_subject, source_id, notify_source, config)
     })
     |> actor.on_message(handle_message)
   case actor.start(builder) {
@@ -251,7 +260,9 @@ fn start_mode(
       process.unlink(started.pid)
       let source =
         started.data.1
-        |> option.map(fn(subject) { source.new_source(subject, config.timeout) })
+        |> option.map(fn(subject) {
+          source.new_source(source_id, subject, config.timeout)
+        })
       Ok(#(Pool(started.data.0, config.timeout), source))
     }
   }
@@ -268,6 +279,7 @@ fn validate(config: Config(event, state)) -> Result(Nil, StartError) {
 
 fn initialise(
   pool_subject: Subject(Message(event, worker_state)),
+  source_id: Reference,
   source_callback: Option(fn(source.Event) -> Nil),
   config: Config(event, worker_state),
 ) -> Result(
@@ -292,6 +304,7 @@ fn initialise(
   let state =
     State(
       pool_subject:,
+      source_id:,
       stage: core.new(),
       workers: [],
       next_worker_id: 1,
@@ -319,10 +332,22 @@ fn initialise(
 
 fn start_notifier(
   callback: fn(message) -> Nil,
-) -> Result(Subject(NotifierMessage(message)), String) {
+) -> Result(Notifier(message), String) {
+  let parent_pid = process.self()
   case
     actor.start(
-      actor.new(Nil)
+      actor.new_with_initialiser(1000, fn(subject) {
+        let monitor = process.monitor(parent_pid)
+        let selector =
+          process.new_selector()
+          |> process.select(subject)
+          |> process.select_specific_monitor(monitor, NotifierPoolDown)
+        Ok(
+          actor.initialised(Nil)
+          |> actor.selecting(selector)
+          |> actor.returning(subject),
+        )
+      })
       |> actor.on_message(fn(state, message) {
         case message {
           Notify(message) -> {
@@ -330,6 +355,7 @@ fn start_notifier(
             actor.continue(state)
           }
           StopNotifier -> actor.stop()
+          NotifierPoolDown(_) -> actor.stop()
         }
       }),
     )
@@ -337,7 +363,8 @@ fn start_notifier(
     Error(error) -> Error(string.inspect(error))
     Ok(started) -> {
       process.unlink(started.pid)
-      Ok(started.data)
+      process.monitor(started.pid)
+      Ok(Notifier(started.data, started.pid))
     }
   }
 }
@@ -374,20 +401,29 @@ fn start_worker(
   replacing: Option(WorkerId),
 ) -> Result(State(event, worker_state), String) {
   let id = WorkerId(state.next_worker_id)
-  let worker_state = state.config.initial_state(slot)
   let reporter = state.reporter
   let handler = state.config.handle_batch
+  let initial_state = state.config.initial_state
   let worker_builder =
-    actor.new(worker_state)
+    actor.new_with_initialiser(state.config.timeout, fn(subject) {
+      let assert Ok(pool_pid) = process.subject_owner(pool_subject)
+      let monitor = process.monitor(pool_pid)
+      let selector =
+        process.new_selector()
+        |> process.select(subject)
+        |> process.select_specific_monitor(monitor, PoolDown)
+      Ok(
+        actor.initialised(initial_state(slot))
+        |> actor.selecting(selector)
+        |> actor.returning(subject),
+      )
+    })
     |> actor.on_message(fn(worker_state, message) {
       case message {
         Work(events) -> {
-          process.send(reporter, Notify(BatchStarted(id, list.length(events))))
+          notify(reporter, BatchStarted(id, list.length(events)))
           let worker_state = handler(worker_state, events)
-          process.send(
-            reporter,
-            Notify(BatchCompleted(id, list.length(events))),
-          )
+          notify(reporter, BatchCompleted(id, list.length(events)))
           process.send(pool_subject, WorkerCompleted(id, list.length(events)))
           actor.continue(worker_state)
         }
@@ -395,6 +431,7 @@ fn start_worker(
           process.send(pool_subject, WorkerExited(id))
           actor.stop()
         }
+        PoolDown(_) -> actor.stop()
       }
     })
   use started <- result.try(
@@ -426,10 +463,9 @@ fn start_worker(
     apply_stage(state, command.Subscribe(subscription, participant, 0))
   let assert Ok(state) =
     apply_stage(state, command.Ask(subscription, state.config.prefetch))
-  process.send(state.reporter, Notify(WorkerStarted(id, slot)))
+  notify(state.reporter, WorkerStarted(id, slot))
   case replacing {
-    Some(previous) ->
-      process.send(state.reporter, Notify(WorkerReplaced(previous, id, slot)))
+    Some(previous) -> notify(state.reporter, WorkerReplaced(previous, id, slot))
     None -> Nil
   }
   Ok(state)
@@ -554,7 +590,7 @@ fn handle_stop(
   case state.stopping {
     True -> reply_and_continue(state, reply, Error(AlreadyStopping))
     False -> {
-      process.send(state.reporter, Notify(PoolStopping))
+      notify(state.reporter, PoolStopping)
       let state =
         shutdown_source(
           State(..state, stopping: True, stop_waiters: [
@@ -578,10 +614,7 @@ fn handle_worker_exit(
     Error(_) -> actor.continue(state)
     Ok(#(worker, workers)) -> {
       process.demonitor_process(worker.monitor)
-      process.send(
-        state.reporter,
-        Notify(WorkerStopped(worker.id, worker.slot)),
-      )
+      notify(state.reporter, WorkerStopped(worker.id, worker.slot))
       finish_if_stopped(State(..state, workers:))
     }
   }
@@ -594,41 +627,52 @@ fn handle_worker_down(
   case down {
     process.PortDown(..) -> actor.continue(state)
     process.ProcessDown(pid: pid, ..) ->
-      case take_worker_by_pid(state.workers, pid, []) {
-        Error(_) -> actor.continue(state)
-        Ok(#(worker, workers)) -> {
-          process.send(
-            state.reporter,
-            Notify(WorkerStopped(worker.id, worker.slot)),
-          )
-          let state = State(..state, workers:)
-          case state.shutdown_started {
-            True -> finish_if_stopped(state)
-            False -> {
-              let assert Ok(state) =
-                apply_stage(
-                  state,
-                  command.ParticipantDown(worker.participant_id),
-                )
-              case
-                start_worker(
-                  state,
-                  state.pool_subject,
-                  worker.slot,
-                  Some(worker.id),
-                )
-              {
-                Ok(state) ->
-                  case state.stopping && core.buffer_size(state.stage) == 0 {
-                    True -> begin_shutdown(state)
-                    False -> actor.continue(reconcile_source(state))
+      case is_source_notifier(state, pid), state.reporter.pid == pid {
+        True, _ -> actor.stop_abnormal("asynchronous source callback stopped")
+        _, True -> actor.continue(state)
+        False, False ->
+          case take_worker_by_pid(state.workers, pid, []) {
+            Error(_) -> actor.continue(state)
+            Ok(#(worker, workers)) -> {
+              notify(state.reporter, WorkerStopped(worker.id, worker.slot))
+              let state = State(..state, workers:)
+              case state.shutdown_started {
+                True -> finish_if_stopped(state)
+                False -> {
+                  let assert Ok(state) =
+                    apply_stage(
+                      state,
+                      command.ParticipantDown(worker.participant_id),
+                    )
+                  case
+                    start_worker(
+                      state,
+                      state.pool_subject,
+                      worker.slot,
+                      Some(worker.id),
+                    )
+                  {
+                    Ok(state) ->
+                      case
+                        state.stopping && core.buffer_size(state.stage) == 0
+                      {
+                        True -> begin_shutdown(state)
+                        False -> actor.continue(reconcile_source(state))
+                      }
+                    Error(reason) -> actor.stop_abnormal(reason)
                   }
-                Error(reason) -> actor.stop_abnormal(reason)
+                }
               }
             }
           }
-        }
       }
+  }
+}
+
+fn is_source_notifier(state: State(event, worker_state), pid: Pid) -> Bool {
+  case state.source_notifier {
+    Some(notifier) -> notifier.pid == pid
+    None -> False
   }
 }
 
@@ -713,12 +757,12 @@ fn notify_source_actions(
       list.each(actions, fn(action) {
         let event = case action {
           source_core.GrantCapacity(id, amount) ->
-            source.DemandGranted(source.new_grant(id, amount))
+            source.DemandGranted(source.new_grant(state.source_id, id, amount))
           source_core.RevokeGrant(id, amount) ->
-            source.GrantRevoked(source.new_grant(id, amount))
+            source.GrantRevoked(source.new_grant(state.source_id, id, amount))
           source_core.StopSource -> source.SourceStopped
         }
-        process.send(notifier, Notify(event))
+        notify(notifier, event)
       })
   }
 }
@@ -729,10 +773,10 @@ fn finish_if_stopped(
   case state.stopping && list.is_empty(state.workers) {
     False -> actor.continue(state)
     True -> {
-      process.send(state.reporter, Notify(PoolStopped))
-      process.send(state.reporter, StopNotifier)
+      notify(state.reporter, PoolStopped)
+      process.send(state.reporter.subject, StopNotifier)
       case state.source_notifier {
-        Some(notifier) -> process.send(notifier, StopNotifier)
+        Some(notifier) -> process.send(notifier.subject, StopNotifier)
         None -> Nil
       }
       list.each(state.stop_waiters, fn(reply) { process.send(reply, Ok(Nil)) })
@@ -748,6 +792,10 @@ fn reply_and_continue(
 ) -> actor.Next(State(event, worker_state), Message(event, worker_state)) {
   process.send(reply, value)
   actor.continue(state)
+}
+
+fn notify(notifier: Notifier(message), message: message) -> Nil {
+  process.send(notifier.subject, Notify(message))
 }
 
 fn find_worker(
