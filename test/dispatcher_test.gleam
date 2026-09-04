@@ -1,3 +1,5 @@
+import gleam/int
+import gleam/list
 import stage/domains/dispatcher
 import stage/value_objects/subscription_id
 
@@ -65,4 +67,44 @@ pub fn partition_sends_events_to_matching_partition_test() {
       ],
       remaining: [4],
     )
+}
+
+pub fn target_rejects_negative_demand_test() {
+  let target = dispatcher.target(id("a"), 0)
+  assert dispatcher.with_demand(target, -1)
+    == Error(dispatcher.InvalidDemand(-1))
+}
+
+pub fn demand_preserves_all_events_when_capacity_ends_test() {
+  let result =
+    dispatcher.dispatch(dispatcher.Demand, [demand_target("a", 2, 0)], [
+      1,
+      2,
+      3,
+      4,
+    ])
+
+  assert result.remaining == [3, 4]
+  assert result.deliveries
+    == [
+      dispatcher.Delivery(subscription_id: id("a"), events: [1, 2]),
+    ]
+}
+
+pub fn demand_dispatches_large_batch_without_losing_events_test() {
+  let events =
+    int.range(from: 0, to: 10_000, with: [], run: fn(acc, event) {
+      [event, ..acc]
+    })
+    |> list.reverse
+  let result =
+    dispatcher.dispatch(
+      dispatcher.Demand,
+      [demand_target("a", 10_000, 0)],
+      events,
+    )
+  let assert [dispatcher.Delivery(events: delivered, ..)] = result.deliveries
+
+  assert delivered == events
+  assert result.remaining == []
 }

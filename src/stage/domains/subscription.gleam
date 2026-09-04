@@ -1,22 +1,31 @@
 import stage/value_objects/participant_id.{type ParticipantId}
 import stage/value_objects/subscription_id.{type SubscriptionId}
 
-pub type SubscriptionStatus {
-  Active
-  Cancelled
-}
-
 pub opaque type Subscription {
   Subscription(
     id: SubscriptionId,
     participant_id: ParticipantId,
     demand: Int,
-    status: SubscriptionStatus,
+    partition: Int,
   )
 }
 
 pub fn new(id: SubscriptionId, participant: ParticipantId) -> Subscription {
-  Subscription(id: id, participant_id: participant, demand: 0, status: Active)
+  new_with_partition(id, participant, 0)
+}
+
+/// Creates an active subscription with zero demand in a dispatcher partition.
+pub fn new_with_partition(
+  id: SubscriptionId,
+  participant: ParticipantId,
+  partition: Int,
+) -> Subscription {
+  Subscription(
+    id: id,
+    participant_id: participant,
+    demand: 0,
+    partition: partition,
+  )
 }
 
 pub fn id(subscription: Subscription) -> SubscriptionId {
@@ -34,41 +43,28 @@ pub fn demand(subscription: Subscription) -> Int {
   value
 }
 
-pub fn status(subscription: Subscription) -> SubscriptionStatus {
-  let Subscription(status: value, ..) = subscription
+pub fn partition(subscription: Subscription) -> Int {
+  let Subscription(partition: value, ..) = subscription
   value
-}
-
-pub fn cancel(subscription: Subscription) -> Subscription {
-  let Subscription(id: id, participant_id: participant_id, ..) = subscription
-  Subscription(
-    id: id,
-    participant_id: participant_id,
-    demand: 0,
-    status: Cancelled,
-  )
 }
 
 pub type SubscriptionError {
   InvalidDemand(Int)
-  SubscriptionCancelled
   InsufficientDemand
 }
 
+/// Adds positive downstream capacity without reactivating cancelled subscriptions.
 pub fn add_demand(
   subscription: Subscription,
   amount: Int,
 ) -> Result(Subscription, SubscriptionError) {
   case amount <= 0 {
     True -> Error(InvalidDemand(amount))
-    False ->
-      case status(subscription) {
-        Cancelled -> Error(SubscriptionCancelled)
-        Active -> set_demand(subscription, demand(subscription) + amount)
-      }
+    False -> set_demand(subscription, demand(subscription) + amount)
   }
 }
 
+/// Consumes positive capacity while preventing demand from becoming negative.
 pub fn consume_demand(
   subscription: Subscription,
   amount: Int,
@@ -76,13 +72,9 @@ pub fn consume_demand(
   case amount <= 0 {
     True -> Error(InvalidDemand(amount))
     False ->
-      case status(subscription) {
-        Cancelled -> Error(SubscriptionCancelled)
-        Active ->
-          case amount > demand(subscription) {
-            True -> Error(InsufficientDemand)
-            False -> set_demand(subscription, demand(subscription) - amount)
-          }
+      case amount > demand(subscription) {
+        True -> Error(InsufficientDemand)
+        False -> set_demand(subscription, demand(subscription) - amount)
       }
   }
 }
@@ -95,12 +87,12 @@ fn set_demand(
     id: id,
     participant_id: participant_id,
     demand: _,
-    status: status,
+    partition: partition,
   ) = subscription
   Ok(Subscription(
     id: id,
     participant_id: participant_id,
     demand: value,
-    status: status,
+    partition: partition,
   ))
 }

@@ -5,5 +5,4 @@ pub type StageError {
   UnknownSubscription(subscription_id: SubscriptionId)
   DuplicateSubscription(subscription_id: SubscriptionId)
   SubscriptionCancelled(subscription_id: SubscriptionId)
-  MultipleSubscriptionsNotSupported
 }

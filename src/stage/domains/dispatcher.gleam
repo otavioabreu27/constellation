@@ -3,8 +3,12 @@ import gleam/list
 import stage/value_objects/subscription_id.{type SubscriptionId}
 
 /// A subscriber and the capacity currently available to it.
-pub type Target {
+pub opaque type Target {
   Target(subscription_id: SubscriptionId, demand: Int, partition: Int)
+}
+
+pub type TargetError {
+  InvalidDemand(Int)
 }
 
 /// Selects how events are assigned to subscribers.
@@ -32,6 +36,8 @@ pub type DispatchResult(event) {
 ///
 /// Demand is consumed in the returned targets. Events in `remaining` were not
 /// delivered and must be retained by the core buffer.
+/// Demand and partition strategies preserve FIFO per subscription. They do not
+/// promise a global processing order across different subscribers.
 pub fn dispatch(
   strategy: Strategy(event),
   targets: List(Target),
@@ -44,21 +50,51 @@ pub fn dispatch(
   }
 }
 
+/// Reports whether the strategy can currently deliver at least one event.
+pub fn has_capacity(strategy: Strategy(event), targets: List(Target)) -> Bool {
+  case strategy {
+    Broadcast ->
+      case targets {
+        [] -> False
+        _ -> list.all(targets, fn(target) { target.demand > 0 })
+      }
+    Demand | Partition(_) -> list.any(targets, fn(target) { target.demand > 0 })
+  }
+}
+
 /// Creates a dispatch target with no available demand.
 pub fn target(subscription_id: SubscriptionId, partition: Int) -> Target {
   Target(subscription_id: subscription_id, demand: 0, partition: partition)
 }
 
+/// Returns the subscription represented by a target.
+pub fn subscription_id(target: Target) -> SubscriptionId {
+  target.subscription_id
+}
+
+/// Returns the remaining capacity represented by a target.
+pub fn demand(target: Target) -> Int {
+  target.demand
+}
+
+/// Returns the partition assigned to a target.
+pub fn partition(target: Target) -> Int {
+  target.partition
+}
+
 /// Updates a target's demand, rejecting negative capacity.
-pub fn with_demand(value: Target, demand: Int) -> Result(Target, Nil) {
+pub fn with_demand(value: Target, demand: Int) -> Result(Target, TargetError) {
   case demand < 0 {
-    True -> Error(Nil)
+    True -> Error(InvalidDemand(demand))
     False -> set_target_demand(value, demand)
   }
 }
 
 // Rebuilds a target after validating its new demand.
-fn set_target_demand(value: Target, demand: Int) -> Result(Target, Nil) {
+fn set_target_demand(
+  value: Target,
+  demand: Int,
+) -> Result(Target, TargetError) {
   let Target(subscription_id: id, partition: partition, ..) = value
   Ok(Target(subscription_id: id, demand: demand, partition: partition))
 }
@@ -82,12 +118,17 @@ fn demand_loop(
     [] ->
       DispatchResult(
         targets: targets,
-        deliveries: deliveries,
+        deliveries: normalize_deliveries(deliveries),
         remaining: list.reverse(remaining),
       )
     [event, ..rest] ->
       case select_target(targets, []) {
-        Error(_) -> demand_loop(targets, rest, deliveries, [event, ..remaining])
+        Error(_) ->
+          DispatchResult(
+            targets: targets,
+            deliveries: normalize_deliveries(deliveries),
+            remaining: list.append(list.reverse(remaining), [event, ..rest]),
+          )
         Ok(#(selected, reordered)) ->
           demand_one_event(
             rest,
@@ -152,10 +193,7 @@ fn add_delivery(
     [Delivery(subscription_id: delivery_id, events: events), ..rest] ->
       case delivery_id == id {
         True -> [
-          Delivery(
-            subscription_id: delivery_id,
-            events: list.append(events, [event]),
-          ),
+          Delivery(subscription_id: delivery_id, events: [event, ..events]),
           ..rest
         ]
         False -> [
@@ -164,6 +202,16 @@ fn add_delivery(
         ]
       }
   }
+}
+
+// Restores FIFO order after events were prepended during accumulation.
+fn normalize_deliveries(
+  deliveries: List(Delivery(event)),
+) -> List(Delivery(event)) {
+  list.map(deliveries, fn(delivery) {
+    let Delivery(subscription_id: id, events: events) = delivery
+    Delivery(subscription_id: id, events: list.reverse(events))
+  })
 }
 
 // Sends the same prefix to every target using their shared minimum capacity.
@@ -228,7 +276,7 @@ fn partition_loop(
     [] ->
       DispatchResult(
         targets: targets,
-        deliveries: deliveries,
+        deliveries: normalize_deliveries(deliveries),
         remaining: list.reverse(remaining),
       )
     [event, ..rest] ->
