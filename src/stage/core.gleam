@@ -1,8 +1,10 @@
 import gleam/dict
 import gleam/int
 import gleam/list
-import stage/domains/command.{type Command, Ask, Push, Subscribe}
-import stage/domains/effect.{type Effect, SendEvents}
+import stage/domains/command.{
+  type Command, Ask, Cancel, ParticipantDown, Push, Subscribe,
+}
+import stage/domains/effect.{type Effect, NotifyCancelled, SendEvents}
 import stage/domains/stage_error.{
   type StageError, DuplicateSubscription, InvalidDemand,
   MultipleSubscriptionsNotSupported, SubscriptionCancelled, UnknownSubscription,
@@ -26,8 +28,8 @@ pub fn update(
       case dict.get(subscriptions, id) {
         Ok(_) -> Error(DuplicateSubscription(id))
         Error(_) ->
-          case dict.to_list(subscriptions) {
-            [] ->
+          case has_active_subscription(subscriptions) {
+            False ->
               Ok(
                 #(
                   StageState(
@@ -41,7 +43,7 @@ pub fn update(
                   [],
                 ),
               )
-            _ -> Error(MultipleSubscriptionsNotSupported)
+            True -> Error(MultipleSubscriptionsNotSupported)
           }
       }
 
@@ -74,15 +76,71 @@ pub fn update(
           )
         Ok(#(id, value)) -> apply_push(subscriptions, buffer, events, id, value)
       }
+
+    Cancel(subscription_id: id) ->
+      case dict.get(subscriptions, id) {
+        Error(_) -> Error(UnknownSubscription(id))
+        Ok(value) -> cancel_subscription(subscriptions, buffer, id, value)
+      }
+
+    ParticipantDown(participant_id: participant_id) ->
+      case sole_subscription(subscriptions) {
+        Error(_) -> Ok(#(state, []))
+        Ok(#(id, value)) ->
+          case subscription.participant_id(value) == participant_id {
+            True -> cancel_subscription(subscriptions, buffer, id, value)
+            False -> Ok(#(state, []))
+          }
+      }
   }
 }
 
 fn sole_subscription(
   subscriptions: dict.Dict(SubscriptionId, subscription.Subscription),
 ) -> Result(#(SubscriptionId, subscription.Subscription), Nil) {
-  case dict.to_list(subscriptions) {
+  case
+    list.filter(dict.to_list(subscriptions), fn(pair) {
+      let #(_, value) = pair
+      subscription.status(value) == subscription.Active
+    })
+  {
     [value] -> Ok(value)
     _ -> Error(Nil)
+  }
+}
+
+fn has_active_subscription(
+  subscriptions: dict.Dict(SubscriptionId, subscription.Subscription),
+) -> Bool {
+  list.any(dict.to_list(subscriptions), fn(pair) {
+    let #(_, value) = pair
+    subscription.status(value) == subscription.Active
+  })
+}
+
+fn cancel_subscription(
+  subscriptions: dict.Dict(SubscriptionId, subscription.Subscription),
+  buffer: List(event),
+  id: SubscriptionId,
+  value: subscription.Subscription,
+) -> Result(#(StageState(event), List(Effect(event))), StageError) {
+  case subscription.status(value) {
+    subscription.Cancelled ->
+      Ok(#(StageState(subscriptions: subscriptions, buffer: buffer), []))
+    subscription.Active ->
+      Ok(
+        #(
+          StageState(
+            subscriptions: dict.insert(
+              subscriptions,
+              id,
+              subscription.cancel(value),
+            ),
+            buffer: buffer,
+          ),
+          [NotifyCancelled(subscription_id: id)],
+        ),
+      )
   }
 }
 

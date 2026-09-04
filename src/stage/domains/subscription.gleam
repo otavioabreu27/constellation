@@ -39,6 +39,16 @@ pub fn status(subscription: Subscription) -> SubscriptionStatus {
   value
 }
 
+pub fn cancel(subscription: Subscription) -> Subscription {
+  let Subscription(id: id, participant_id: participant_id, ..) = subscription
+  Subscription(
+    id: id,
+    participant_id: participant_id,
+    demand: 0,
+    status: Cancelled,
+  )
+}
+
 pub type SubscriptionError {
   InvalidDemand(Int)
   SubscriptionCancelled

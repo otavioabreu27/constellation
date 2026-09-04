@@ -1,7 +1,7 @@
 import gleam/dict
 import stage/core
-import stage/domains/command.{Ask, Push, Subscribe}
-import stage/domains/effect.{SendEvents}
+import stage/domains/command.{Ask, Cancel, ParticipantDown, Push, Subscribe}
+import stage/domains/effect.{NotifyCancelled, SendEvents}
 import stage/domains/stage_error
 import stage/domains/subscription
 import stage/value_objects/participant_id
@@ -64,4 +64,50 @@ pub fn ask_drains_buffer_in_fifo_order_test() {
 
   assert effects == [SendEvents(subscription_id: id, events: [4, 5])]
   assert state.buffer == []
+}
+
+pub fn cancel_invalidates_subscription_and_discards_demand_test() {
+  let id = subscription_id()
+  let state = core.new()
+  let assert Ok(#(state, _)) =
+    core.update(state, Subscribe(id: id, participant_id: participant_id()))
+  let assert Ok(#(state, _)) =
+    core.update(state, Ask(subscription_id: id, amount: 3))
+  let assert Ok(#(state, effects)) =
+    core.update(state, Cancel(subscription_id: id))
+
+  assert effects == [NotifyCancelled(subscription_id: id)]
+  let assert Ok(value) = dict.get(state.subscriptions, id)
+  assert subscription.status(value) == subscription.Cancelled
+  assert subscription.demand(value) == 0
+  assert core.update(state, Ask(subscription_id: id, amount: 1))
+    == Error(stage_error.SubscriptionCancelled(id))
+}
+
+pub fn cancel_is_idempotent_test() {
+  let id = subscription_id()
+  let state = core.new()
+  let assert Ok(#(state, _)) =
+    core.update(state, Subscribe(id: id, participant_id: participant_id()))
+  let assert Ok(#(state, _)) = core.update(state, Cancel(subscription_id: id))
+  let assert Ok(#(state, effects)) =
+    core.update(state, Cancel(subscription_id: id))
+
+  assert effects == []
+  let assert Ok(value) = dict.get(state.subscriptions, id)
+  assert subscription.status(value) == subscription.Cancelled
+}
+
+pub fn participant_down_cancels_associated_subscription_test() {
+  let id = subscription_id()
+  let participant = participant_id()
+  let state = core.new()
+  let assert Ok(#(state, _)) =
+    core.update(state, Subscribe(id: id, participant_id: participant))
+  let assert Ok(#(state, effects)) =
+    core.update(state, ParticipantDown(participant_id: participant))
+
+  assert effects == [NotifyCancelled(subscription_id: id)]
+  let assert Ok(value) = dict.get(state.subscriptions, id)
+  assert subscription.status(value) == subscription.Cancelled
 }

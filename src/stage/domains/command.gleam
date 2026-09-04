@@ -5,4 +5,6 @@ pub type Command(event) {
   Subscribe(id: SubscriptionId, participant_id: ParticipantId)
   Ask(subscription_id: SubscriptionId, amount: Int)
   Push(events: List(event))
+  Cancel(subscription_id: SubscriptionId)
+  ParticipantDown(participant_id: ParticipantId)
 }
