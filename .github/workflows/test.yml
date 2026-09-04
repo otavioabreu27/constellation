@@ -20,10 +20,16 @@ jobs:
           # elixir-version: "1"
       - run: gleam deps download
       - run: gleam test
-      - run: gleam format --check src test
+      - run: gleam format --check src test examples
+      - run: gleam docs build
+      - run: gleam export hex-tarball
       - run: gleam check
         working-directory: examples/mist_dashboard
       - run: gleam check
         working-directory: examples/mist_stage_api
       - run: gleam check
         working-directory: examples/parallel_benchmark
+      - run: gleam check
+        working-directory: examples/worker_pool
+      - run: gleam check
+        working-directory: examples/async_source
