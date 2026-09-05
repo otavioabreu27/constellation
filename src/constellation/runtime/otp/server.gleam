@@ -1,6 +1,7 @@
 import constellation/runtime
 import constellation/runtime/otp/lifecycle
 import constellation/runtime/otp/model
+import constellation/runtime/otp/notifier
 import constellation/runtime/otp/outbound
 import constellation/runtime/otp/participant_monitors
 import constellation/runtime/otp/trace
@@ -8,7 +9,9 @@ import constellation/value_objects/subscription_id
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 
 @internal
@@ -17,6 +20,13 @@ pub fn start(
   wrap: fn(Subject(model.Message(event))) -> handle,
 ) -> actor.StartResult(handle) {
   actor.new_with_initialiser(model.default_start_timeout, fn(subject) {
+    use reporter <- result.try(case model.reporter(config) {
+      None -> Ok(None)
+      Some(callback) ->
+        notifier.start(callback, notifier.Isolate)
+        |> result.map(Some)
+        |> result.map_error(string.inspect)
+    })
     let selector =
       process.new_selector()
       |> process.select(subject)
@@ -27,7 +37,7 @@ pub fn start(
         model.buffer_capacity(config),
       ),
       monitors: participant_monitors.new(),
-      reporter: model.reporter(config),
+      reporter:,
       next_trace_id: 1,
     ))
     |> actor.selecting(selector)
@@ -156,7 +166,16 @@ fn handle_message(
         }
       }
     }
-    model.ParticipantWentDown(down) -> lifecycle.participant_down(state, down)
+    model.ParticipantWentDown(down) -> {
+      case down, state.reporter {
+        process.ProcessDown(pid: pid, ..), Some(reporter) ->
+          case notifier.pid(reporter) == pid {
+            True -> actor.stop_abnormal("telemetry notifier stopped")
+            False -> lifecycle.participant_down(state, down)
+          }
+        _, _ -> lifecycle.participant_down(state, down)
+      }
+    }
     model.Stop(reply) -> {
       log(state, "stop", "received", "")
       case runtime.shutdown(state.runtime) {
@@ -173,6 +192,10 @@ fn handle_message(
             "subscriptions=" <> int.to_string(list.length(deliveries)),
           )
           outbound.execute(deliveries, state.reporter, state.next_trace_id)
+          case state.reporter {
+            Some(reporter) -> notifier.stop(reporter)
+            None -> Nil
+          }
           process.send(reply, Ok(Nil))
           actor.stop()
         }

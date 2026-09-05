@@ -60,7 +60,9 @@ pub fn with_logging(config: Config(event)) -> Config(event) {
 
 /// Sends structured lifecycle events to a custom reporter.
 ///
-/// The reporter runs inside the stage process and must return quickly.
+/// The reporter runs in a separate process. Callback panics drop that event
+/// without stopping the Stage or subsequent telemetry. Delivery is best-effort;
+/// callbacks should remain inexpensive because the notifier mailbox is unbounded.
 pub fn with_reporter(
   config: Config(event),
   reporter: fn(telemetry.Event) -> Nil,

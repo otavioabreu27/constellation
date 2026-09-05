@@ -1,11 +1,13 @@
 name = "constellation"
-version = "0.1.0"
+version = "0.2.0"
 gleam = ">= 1.18.0"
 
 description = "Demand-driven event pipelines and backpressure for Gleam and OTP"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "otavioabreu27", repo = "constellation" }
 internal_modules = [
+  "constellation/worker_pool/internal/*",
+  "constellation/runtime/otp/notifier",
   "constellation/core/*",
   "constellation/domains/buffer",
   "constellation/domains/dispatcher/*",

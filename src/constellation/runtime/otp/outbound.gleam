@@ -1,4 +1,5 @@
 import constellation/runtime
+import constellation/runtime/otp/notifier.{type Notifier}
 import constellation/runtime/otp/telemetry
 import constellation/runtime/otp/trace
 import constellation/value_objects/subscription_id
@@ -12,7 +13,7 @@ pub fn execute(
   outbound: List(
     runtime.Outbound(event, Subject(runtime.ParticipantMessage(event))),
   ),
-  reporter: Option(fn(telemetry.Event) -> Nil),
+  reporter: Option(Notifier(telemetry.Event)),
   trace_id: Int,
 ) -> Nil {
   case outbound {

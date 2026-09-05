@@ -38,10 +38,43 @@ pub fn main() {
 }
 ```
 
-The maximum outstanding capacity is `workers * prefetch`. A worker that exits
-is replaced in the same slot with a fresh monotonic `WorkerId`. A batch whose
-handler crashes is not retried, so worker processing is at-most-once. Persist
-and retry work before pushing it when stronger delivery semantics are required.
+Push-driven pools can bound queued events and participate in an OTP
+supervision tree:
+
+```gleam
+import gleam/otp/static_supervisor as supervisor
+
+let config =
+  worker_pool.each(
+    size: 4,
+    prefetch: 1,
+    initial_state: fn(_) { Nil },
+    handle_event: fn(state, _event) { state },
+  )
+  |> worker_pool.with_buffer_capacity(500)
+
+let assert Ok(pool_child) = worker_pool.supervised(config)
+let assert Ok(_) =
+  supervisor.new(supervisor.OneForOne)
+  |> supervisor.add(pool_child)
+  |> supervisor.start
+```
+
+The worker-reserved capacity is `workers * prefetch`; a configured buffer adds
+only its explicit bounded capacity. A worker that exits is replaced in the
+same slot with a fresh monotonic `WorkerId` within that pool incarnation. A batch whose handler crashes is
+not retried, so worker processing is at-most-once. Persist and retry work
+before pushing it when stronger delivery semantics are required.
+
+The pool handle returned by a supervised child resolves its replacement after
+restart. In-flight batches are never replayed. Internal worker messages use an
+incarnation-local mailbox so old completions cannot renew a new pool's demand.
+The configured timeout is also used in the supervisor child specification.
+
+Pool event/error/snapshot constructors are defined in
+`constellation/worker_pool/types`; the `worker_pool` façade retains type aliases.
+See [migration guidance](https://github.com/otavioabreu27/constellation/blob/main/MIGRATION.md)
+and [architecture](https://github.com/otavioabreu27/constellation/blob/main/docs/architecture.md).
 
 ## Asynchronous source
 
@@ -75,7 +108,9 @@ pub fn main() {
 ```
 
 Supply is partial and offset-based. Exact retries return `Duplicate`, stale or
-foreign grants are rejected, and shutdown revokes pending grants. Source and
+foreign grants are rejected, and shutdown revokes pending grants. `StaleGrant`
+and `Duplicate` never dispatch events or consume capacity. Source reservation
+and Stage admission are committed together only on accepted supply. Source and
 reporter callbacks run outside the Stage process.
 
 ## Low-level Stage
@@ -119,8 +154,12 @@ pub fn main() {
   safely expose one scalar upstream capacity.
 - OTP failures are typed. A timed-out command may still complete if it was
   already queued, so callers must only retry idempotent application operations.
-- Worker-pool callbacks are isolated from the Stage. Low-level Stage telemetry
-  reporters execute in the Stage process and must return quickly.
+- Pool and low-level Stage telemetry run in separate notifier processes. Callback
+  panics drop only the current telemetry event; later reports continue. Source
+  callbacks remain fail-fast because lost demand notifications would stall work.
+- Reporter mailboxes are not bounded. Delivery is best-effort; keep callbacks
+  inexpensive. Unexpected notifier death terminates its owner instead of silently
+  disabling reporting.
 - State is ephemeral. Persistence, leases, durable ACKs, retries, backoff,
   dead-letter queues, and distributed coordination are application concerns.
 

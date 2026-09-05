@@ -1,5 +1,6 @@
 import constellation/domains/dispatcher
 import constellation/runtime
+import constellation/runtime/otp/notifier.{type Notifier}
 import constellation/runtime/otp/participant_monitors
 import constellation/runtime/otp/telemetry
 import constellation/value_objects/participant_id.{type ParticipantId}
@@ -56,7 +57,7 @@ pub type State(event) {
   State(
     runtime: runtime.Runtime(event, Subject(runtime.ParticipantMessage(event))),
     monitors: participant_monitors.Registry,
-    reporter: Option(fn(telemetry.Event) -> Nil),
+    reporter: Option(Notifier(telemetry.Event)),
     next_trace_id: Int,
   )
 }

@@ -1,3 +1,4 @@
+import constellation/runtime/otp/notifier.{type Notifier}
 import constellation/runtime/otp/telemetry
 import gleam/erlang/process.{type Subject}
 import gleam/option.{type Option, None, Some}
@@ -13,7 +14,7 @@ pub fn subject_owner(subject: Subject(message)) -> String {
 
 @internal
 pub fn log(
-  reporter: Option(fn(telemetry.Event) -> Nil),
+  reporter: Option(Notifier(telemetry.Event)),
   trace_id: Int,
   operation: String,
   phase: String,
@@ -22,12 +23,15 @@ pub fn log(
   case reporter {
     None -> Nil
     Some(report) ->
-      report(telemetry.Event(
-        trace_id: trace_id,
-        stage_pid: string.inspect(process.self()),
-        operation: operation,
-        phase: phase,
-        detail: detail,
-      ))
+      notifier.send(
+        report,
+        telemetry.Event(
+          trace_id: trace_id,
+          stage_pid: string.inspect(process.self()),
+          operation: operation,
+          phase: phase,
+          detail: detail,
+        ),
+      )
   }
 }

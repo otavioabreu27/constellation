@@ -1,5 +1,7 @@
+import constellation/domains/stage_error
 import constellation/source
 import constellation/worker_pool
+import constellation/worker_pool/types as pool_types
 import gleam/erlang/process
 import gleam/int
 import gleam/list
@@ -14,7 +16,51 @@ pub fn invalid_pool_configuration_is_typed_test() {
     )
 
   assert worker_pool.start(config)
-    == Error(worker_pool.InvalidConfig(worker_pool.InvalidSize(0)))
+    == Error(pool_types.InvalidConfig(pool_types.InvalidSize(0)))
+}
+
+pub fn invalid_buffer_capacity_is_typed_test() {
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+    |> worker_pool.with_buffer_capacity(0)
+
+  assert worker_pool.start(config)
+    == Error(pool_types.InvalidConfig(pool_types.InvalidBufferCapacity(0)))
+}
+
+pub fn bounded_pool_rejects_overflow_atomically_test() {
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+    |> worker_pool.with_buffer_capacity(1)
+  let assert Ok(pool) = worker_pool.start(config)
+
+  assert worker_pool.push(pool, [1, 2, 3])
+    == Error(pool_types.StageProtocol(stage_error.BufferCapacityExceeded(1, 2)))
+  let assert Ok(pool_types.Snapshot(buffered_events: 0, ..)) =
+    worker_pool.snapshot(pool)
+  assert worker_pool.stop(pool) == Ok(Nil)
+}
+
+pub fn pool_exposes_supervision_child_specification_test() {
+  let config =
+    worker_pool.new(
+      size: 1,
+      prefetch: 1,
+      initial_state: fn(_) { Nil },
+      handle_batch: fn(state, _) { state },
+    )
+
+  let assert Ok(_) = worker_pool.supervised(config)
 }
 
 pub fn source_reserves_exact_capacity_without_polling_test() {
@@ -48,7 +94,7 @@ pub fn source_reserves_exact_capacity_without_polling_test() {
   assert worker_pool.stop(pool) == Ok(Nil)
   assert source.supply(attached_source, regranted, 0, [])
     == Error(source.SourceUnavailable)
-  assert worker_pool.snapshot(pool) == Error(worker_pool.PoolUnavailable)
+  assert worker_pool.snapshot(pool) == Error(pool_types.PoolUnavailable)
 }
 
 pub fn source_accepts_partial_and_idempotent_supply_test() {
@@ -125,7 +171,7 @@ pub fn failed_source_callback_stops_pool_instead_of_starving_test() {
       panic as "expected source callback failure"
     })
 
-  assert wait_until_unavailable(pool, 50) == worker_pool.PoolUnavailable
+  assert wait_until_unavailable(pool, 50) == pool_types.PoolUnavailable
 }
 
 pub fn slow_source_callback_does_not_block_pool_test() {
@@ -140,7 +186,7 @@ pub fn slow_source_callback_does_not_block_pool_test() {
   let assert Ok(#(pool, _)) =
     worker_pool.start_with_source(config, fn(_) { process.sleep(500) })
 
-  let assert Ok(worker_pool.Snapshot(workers: [_], ..)) =
+  let assert Ok(pool_types.Snapshot(workers: [_], ..)) =
     worker_pool.snapshot(pool)
   assert worker_pool.stop(pool) == Ok(Nil)
 }
@@ -160,9 +206,9 @@ pub fn worker_renews_demand_only_after_handler_completion_test() {
     |> worker_pool.with_reporter(fn(event) { process.send(events, event) })
   let assert Ok(pool) = worker_pool.start(config)
   assert worker_pool.push(pool, [1, 2, 3, 4]) == Ok(Nil)
-  let assert Ok(worker_pool.BatchStarted(_, _)) =
+  let assert Ok(pool_types.BatchStarted(_, _)) =
     receive_matching_batch_event(events)
-  let assert Ok(worker_pool.Snapshot(buffered_events: 2, ..)) =
+  let assert Ok(pool_types.Snapshot(buffered_events: 2, ..)) =
     worker_pool.snapshot(pool)
 
   assert worker_pool.stop(pool) == Ok(Nil)
@@ -186,7 +232,7 @@ pub fn failed_handler_is_replaced_with_a_new_identity_test() {
       },
     )
   let assert Ok(pool) = worker_pool.start(config)
-  let assert Ok(worker_pool.Snapshot(workers: workers, ..)) =
+  let assert Ok(pool_types.Snapshot(workers: workers, ..)) =
     worker_pool.snapshot(pool)
   assert list.length(workers) == 2
 
@@ -243,15 +289,15 @@ fn receive_count(subject, expected: Int, total: Int) -> Int {
 
 fn receive_matching_batch_event(subject) {
   case process.receive(subject, within: 1000) {
-    Ok(worker_pool.BatchStarted(id, count)) ->
-      Ok(worker_pool.BatchStarted(id, count))
+    Ok(pool_types.BatchStarted(id, count)) ->
+      Ok(pool_types.BatchStarted(id, count))
     Ok(_) -> receive_matching_batch_event(subject)
     Error(error) -> Error(error)
   }
 }
 
 fn wait_for_replacement(pool, previous, attempts: Int) {
-  let assert Ok(worker_pool.Snapshot(workers: workers, ..)) =
+  let assert Ok(pool_types.Snapshot(workers: workers, ..)) =
     worker_pool.snapshot(pool)
   case list.find(workers, fn(id) { !list.contains(previous, id) }) {
     Ok(id) -> id
